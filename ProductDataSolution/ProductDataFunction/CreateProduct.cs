@@ -8,51 +8,58 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using ProductDataFunction.Models;
-//using Microsoft.Azure.Cosmos.Table;
-using Microsoft.WindowsAzure.Storage;
+using Microsoft.Azure.Cosmos.Table;
+using Microsoft.Extensions.Configuration;
 
 namespace ProductDataFunction
 {
     public static class CreateProduct
     {
         [FunctionName("CreateProduct")]
-        public static async Task<IActionResult> Run(
-            [HttpTrigger(AuthorizationLevel.Function, "post", Route = null)] HttpRequest req,
-            ILogger log)
+        public static async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "post", Route = null)] HttpRequest req, ILogger log)
         {
-            CloudStorageAccount storageAccount = CloudStorageAccount.Parse("UseDevelopmentStorage=true;DevelopmentStorageProxyUri=http://127.0.0.1:10002");
-
-            //// Create the table client
-            CloudTableClient tableClient = storageAccount.CreateCloudTableClient(new TableClientConfiguration());
-
-            //// Get a reference to the table
-            CloudTable table = tableClient.GetTableReference("Products");
-
-            // Create the table if it doesn't exist
-            table.CreateIfNotExists();
-
-
-            log.LogInformation("C# HTTP trigger function processed a request.");
-
+            var builder = new ConfigurationBuilder()
+            .SetBasePath(Environment.CurrentDirectory)
+            .AddJsonFile("local.settings.json", optional: true, reloadOnChange: true)
+            .AddEnvironmentVariables();
+            var configuration = builder.Build();
+                        
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            var incomingProduct = JsonConvert.DeserializeObject<Product>(requestBody);
+            var storageAccount = CloudStorageAccount.Parse(configuration["StorageConnectionString"]);
+            
+            InsertEntity(storageAccount, incomingProduct, log);
 
-            //var newProduct = JsonConvert.DeserializeObject<Product>(requestBody);
-
-
-            string partitionKey = "partitionKey";
-            string rowKey = "rowKey";
-
-            var productEntity = new ProductEntity(partitionKey, rowKey)
-            {
-                ProductNo = "1234",
-                ProductName = "Tangentbord",
-                Description = "Att skriva med",
-                Price = 149
-            };
-                 
-
-
-            return new OkObjectResult(null);
+            return new OkObjectResult(incomingProduct);
         }
-    }
+
+        private static async void InsertEntity(CloudStorageAccount storageAccount, Product product, ILogger log)
+        {
+            try
+            {
+                var tableClient = storageAccount.CreateCloudTableClient();
+                var table = tableClient.GetTableReference("Products");
+                table.CreateIfNotExists();
+
+                string partitionKey = "Product";
+                string rowKey = product.ProductNo;
+
+                var productEntity = new ProductEntity(partitionKey, rowKey)
+                {
+                    ProductNo = product.ProductNo,
+                    ProductName = product.ProductName,
+                    Description = product.Description,
+                    Price = product.Price,                    
+                    LastUpdated = product.ModifiedDate
+                };
+
+                var tableOperation = TableOperation.InsertOrMerge(productEntity);
+                await table.ExecuteAsync(tableOperation);
+            }
+            catch (Exception ex)
+            {
+                log.LogError($"Insert failure: {ex.InnerException}");
+            }            
+        }
+    }    
 }
