@@ -1,2 +1,2 @@
 # CTET
-iBiz Solutioins - Candidate Technical Evaluation Test
+iBiz Solutions - Candidate Technical Evaluation Test
